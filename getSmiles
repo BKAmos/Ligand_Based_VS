@@ -1,0 +1,45 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Mar 16 09:50:25 2021
+
+@author: Kirtley
+"""
+
+from urllib.request import urlopen
+import pubchempy as pcp
+
+listofCompounds = []
+with open('C:/Path/to/list/of/compounds.txt') as f:   ### creates a list of compounds
+    for line in f:
+        nospace = line.strip('\n')
+        listofCompounds.append(nospace)
+
+
+def CIRconvert(ids):  ### this function searches the url for the name of the compound and if it exists it returns a smiles
+    try:
+        url = 'http://cactus.nci.nih.gov/chemical/structure/' + ids + '/smiles'
+        ans = urlopen(url).read().decode('utf8')
+        return ans
+    except:
+        return 'Did not work'
+
+compoundIDs = []
+smiles = []
+
+for ids in listofCompounds:   ### this loop creates and ID and smiles list
+    compoundIDs.append(ids)
+    smiles.append(CIRconvert(ids))
+    print(ids, CIRconvert(ids))
+    
+for i in range(0, len(compoundIDs)):   ### this loop searchers through the smiles list and if getting the smiles with CIRconvert didn't work it will used pubchems API and search by name to return the smiles, if sucessful appends the smiles to the smiles list
+    if smiles[i] == 'Did not work':
+        compound = pcp.get_compounds(compoundIDs[i], 'name')
+        # print(compound)
+        for j in compound:
+            isosmiles = j.isomeric_smiles
+            smiles[i] = isosmiles
+            
+f = open('C:/Path/to/dump/filtered/data.txt', 'w')   ### write the compound ID and smiles to file
+for i in range(0, len(smiles)):
+    f.write(str(compoundIDs[i]) + '\t' + str(smiles[i]) + '\n')
+f.close()
