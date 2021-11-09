@@ -1,0 +1,551 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Feb  5 14:53:41 2020
+
+@author: 7ka
+
+"""
+import pandas as pd
+import numpy as np
+from rdkit.Chem import PandasTools
+from rdkit.Chem.PandasTools import LoadSDF
+from rdkit import Chem
+from rdkit.Chem import AllChem
+from rdkit import DataStructs
+import multiprocessing as mp
+import os.path
+import sys
+import time
+
+#MAIN
+rawListOfArguments = sys.argv
+
+##### Raw list of arguments entered into the function so as to make it callable from teminal######
+def rawListOfArgs(arguments):
+    
+    global inputDB 
+    global inputFP 
+    global inputSubsamplingRate
+    global inputComp
+    global theTopPercent
+    global outputFilepath
+    
+
+    inputDB = arguments[1]
+    inputFP = arguments[2]
+    inputSubsamplingRate = float(arguments[3])
+    theTopPercent = float(arguments[4])
+    inputComp = arguments[5]
+    
+    outputFilepath = inputDB + "_" + inputFP + "_" + inputComp + '_' + 'subSamplingRate-' + str(inputSubsamplingRate) + '_' + 'topX%-' + str(theTopPercent) + ".txt" 
+
+### Loads a smiles csv and turns it into a pandas dataframe with the columns name smiles and name.  Smiles is generated from rdkits pandastools and Name is the second column in the smiles
+def smiles2DF(input):
+    
+    df1 = pd.read_csv(input)
+    PandasTools.AddMoleculeColumnToFrame(df1, smilesCol = 'smiles')
+    df3 = df1[['smiles', 'ROMol', 'ProtienTarget']]
+    
+    return df3
+########################################################
+
+###Load SDF and outpud a PandaDF
+def sdf2DF(input):
+    
+    df3 = LoadSDF(input, smilesName='smiles', removeHs=False, strictParsing=False)
+    df4 = df3[['smiles', 'ROMol']]
+    
+    return df4
+#######################################
+
+
+### Sub sample either of the datframes and at random according to the input subsampling percentage, returns a subsampled dataframe
+def subsampleDF(df3):
+    
+    global inputSubsamplingRate
+    
+    sub1 = df3.sample(frac = inputSubsamplingRate)
+    DBsub1 = sub1.reset_index(drop = True, inplace = False)
+    
+    return DBsub1
+######################
+
+###### Generates a fingerpirnt based on the subsampled datframes and the input fingerprint type and outputs compound bit vectors
+def genProperFP(sub1, fpType):
+    
+    x = sub1.to_dict('records')
+    romol = [d.get('ROMol') for d in x]
+    FP = []
+    
+    for mol in romol:
+        
+        if fpType == 'topo':
+            fp = Chem.RDKFingerprint(mol)
+            FP.append(fp)
+        
+        if fpType == 'fcfp6':
+            fp = AllChem.GetMorganFingerprintAsBitVect(mol, 3, useFeatures = True)
+            FP.append(fp)
+        
+        if fpType == 'ecfp6':
+            fp = AllChem.GetMorganFingerprintAsBitVect(mol, 3, useFeatures = False)
+            FP.append(fp)
+        
+        if fpType == 'maccs':
+            fp = AllChem.GetMACCSKeysFingerprint(mol)
+            FP.append(fp)
+        
+        if fpType == 'fpn4':
+            fp2 = AllChem.GetMACCSKeysFingerprint(mol)
+            fp3 = AllChem.GetMorganFingerprintAsBitVect(mol, 3, useFeatures = False)
+            fp4 = AllChem.GetMorganFingerprintAsBitVect(mol, 3, useFeatures = True)
+            k5 = fp2 + fp3 + fp4
+            FP.append(k5)
+            
+    sub1[fpType] = FP 
+    DBsub = sub1.drop(columns = ['ROMol'])
+    key = keyCreation(DBsub, inputFP)
+    
+    return key
+#################################
+
+
+#### Generates fingerprints that are suitable for comparison of random to biologcally accurate
+def genRanFP(sub1, fpType):
+    
+    x = sub1.to_dict('records')
+    romol = [d.get('ROMol') for d in x]
+    FP = []
+    
+    for mol in romol:
+        
+        if fpType == 'topo':
+            fp = Chem.RDKFingerprint(mol)
+            k = fp.ToBitString()
+            FP.append(k)
+        
+        if fpType == 'fcfp6':
+            fp = AllChem.GetMorganFingerprintAsBitVect(mol, 3, useFeatures = True)
+            k = fp.ToBitString()
+            FP.append(k)
+        
+        if fpType == 'ecfp6':
+            fp = AllChem.GetMorganFingerprintAsBitVect(mol, 3, useFeatures = False)
+            k = fp.ToBitString()
+            FP.append(k)
+        
+        if fpType == 'maccs':
+            fp = AllChem.GetMACCSKeysFingerprint(mol)
+            k = fp.ToBitString()
+            FP.append(k)
+        
+        if fpType == 'fpn4':
+            fp2 = AllChem.GetMACCSKeysFingerprint(mol)
+            fp3 = AllChem.GetMorganFingerprintAsBitVect(mol, 3, useFeatures = False)
+            fp4 = AllChem.GetMorganFingerprintAsBitVect(mol, 3, useFeatures = True)
+            k2 = fp2.ToBitString()
+            k3 = fp3.ToBitString()
+            k4 = fp4.ToBitString()
+            k5 = k2 + k3 + k4
+            FP.append(k5)
+    
+    sub1[fpType + 'BitVect'] = FP 
+    DBsub = sub1.drop(columns = ['ROMol'])
+    
+    return DBsub
+###################################
+
+
+##### Creates a list of tuples that has the positions of 1's within bit vectors and returns the list to make the explicet bit vector object
+def FPtoListOfOnes(fp):
+    
+    myTuples = ()  
+    
+    for j in range(len(fp[0])): 
+        
+        if(fp[0][j] == '1'):    
+            myTuples = myTuples + (j,)  
+    
+    return myTuples 
+#############################################
+
+####Above and below are functions called within functions ####  They are exluded from callable functions wihtin the main #####
+
+##### Takes two explicit bit vector objects and compares them
+def singleComparison(a, b, compType):
+    
+    if compType == 'Tan':
+        tempy = DataStructs.TanimotoSimilarity(a, b)
+        
+    if compType == 'Dice':
+        tempy = DataStructs.DiceSimilarity(a, b)
+        
+    if compType == 'Sokal':
+        tempy = DataStructs.SokalSimilarity(a, b)
+        
+    if compType == 'Russ':
+        tempy = DataStructs.RusselSimilarity(a, b)
+        
+    if compType == 'Rogot':
+        tempy = DataStructs.RogotGoldbergSimilarity(a, b)
+        
+    if compType == 'Mccon':
+        tempy = DataStructs.McConnaugheySimilarity(a, b)
+        
+    if compType == 'Kulcz':
+        tempy = DataStructs.KulczynskiSimilarity(a, b)
+        
+    if compType == 'Cosine':
+        tempy = DataStructs.CosineSimilarity(a, b)
+        
+    return tempy
+########################################################################
+
+####### Takes dataframe generated from the subasmpling and creates a random colum to add to the dataframe, names it, and returns it to make a RDKIT object ######
+def scrambleFP(DBsub):
+        
+    DBsub1 = DBsub.reset_index(drop = True, inplace = False)
+    DBtoRandomize = DBsub1[inputFP + 'BitVect']
+    ShuffDB = []
+        
+    for j in DBtoRandomize: 
+        total = len(j)  
+        zeros = j.count('0')    
+        arr1 = np.array([0] * zeros + [1] * (total - zeros)) 
+        np.random.shuffle(arr1) 
+        ShuffDB.append(arr1)
+        
+    q = pd.concat([DBsub1, pd.DataFrame(ShuffDB)], axis = 1) 
+    r = q[q.columns[3:]].apply(lambda x: ''.join(x. dropna().astype(str)), axis = 1 )  ### This is specific to the number of columns that are in the dataframe, therefore it needs to be updated and checked for each database.
+    
+    newDBframe = pd.concat([DBsub1, r], axis = 1)
+    DBnamedFrame = newDBframe.rename(columns={0: 'Shuffled' }, inplace = False)
+    
+    return DBnamedFrame
+######################################################
+    
+
+##### Creates the explicit bit vector object for RDKIT so that the the comparisons can be made between biological relavant and random fingerprints ##########
+def createExplicitBitVectObj(DBnamedFrame):
+    
+    bitlength = len(DBnamedFrame.iloc[0,2])   ####could make more general by saying select the last column [0,1] for most databases but [0,3] for DUDE  ####  This needs to be addressed
+    DBProper = DBnamedFrame[[inputFP + 'BitVect']].to_numpy()
+    DBshuffled = DBnamedFrame[['Shuffled']].to_numpy()
+    DBProperFP = []
+    DBRandomizedFP = []
+    
+    for j in range(len(DBProper)): 
+        tempList1 = FPtoListOfOnes(DBProper[j]) 
+        tempBitVector = DataStructs.ExplicitBitVect(bitlength)  
+        tempBitVector.SetBitsFromList(tempList1)    
+        DBProperFP.append(tempBitVector)
+        
+    for i in range(len(DBshuffled)):
+        tempList = FPtoListOfOnes(DBshuffled[i]) 
+        tempBitVector = DataStructs.ExplicitBitVect(bitlength)    
+        tempBitVector.SetBitsFromList(tempList)    
+        DBRandomizedFP.append(tempBitVector)
+    
+    DBnamedFrame['DBProperFP'] = DBProperFP
+    DBnamedFrame['DBRandomizedFP'] = DBRandomizedFP
+    DBSub2Compare = DBnamedFrame.drop(columns = [inputFP + 'BitVect', 'Shuffled'])
+    
+    return DBSub2Compare
+###############################################        
+
+
+#####
+def result(istart, iend, inputfplist, dim, protlist, smileslist, thresh=0):
+    
+    global inputComp
+
+    start = istart
+    end = iend
+    results = []
+
+    for j in range(start, end):
+        a = (j-1) % dim
+        k = ((j-a) / dim) + 1
+        k = round(k)
+        b = (a+k) % dim
+        tempValue1 = singleComparison(inputfplist[a], inputfplist[b], inputComp)
+       
+        if thresh == 0:
+            results.append(tempValue1)
+            results.append(smileslist[a])
+            results.append(smileslist[b])
+            results.append(protlist[a])
+            results.append(protlist[b])
+            
+        else:
+            
+            if tempValue1 >= thresh:
+                results.append(tempValue1)
+                results.append(smileslist[a])
+                results.append(smileslist[b])
+                results.append(protlist[a])
+                results.append(protlist[b])
+                
+    return results
+#############        
+
+##### The idea of this function is to do the preprocessing required to run large datasets through HIPMCL.  This changes each smiles to an integer, producing a key and a output  #####
+    
+def keyCreation(df, inputFP):
+
+    smiles_to_int = []
+    prottarg = []
+    fingerprint = []
+    
+    f = open(outputFilepath[:-4] + '.key.txt', 'w')
+    
+    for i in range(0, len(df)):
+        f.write(str(df.smiles[i]) + '_' + df.ProtienTarget[i] + ' ' + str(i) + '\n')
+        smiles_to_int.append(i)
+        prottarg.append(df.ProtienTarget[i])
+        fingerprint.append(df[inputFP][i])
+    
+    f.close()
+    
+    df1 = pd.DataFrame(list(zip(smiles_to_int, prottarg, fingerprint)), columns = ['smiles', 'ProtienTarget', inputFP])
+    
+    return df1
+##########
+    
+            
+#### This function compares the desired bit vectors to eachother in parallel fashion across any available core
+def all2AllCompProp(DBSub2Compare, comp, inputFP, thresh=0):
+    
+    inputfplist = DBSub2Compare[inputFP].to_list()
+    protlist = DBSub2Compare.ProtienTarget.to_list()
+    smileslist = DBSub2Compare.smiles.to_list()
+    size1 = len(inputfplist)
+    dim = int(size1)
+    possib = int((dim * (dim - 1) / (2)))
+    step = int(size1/2)
+    list2 = []
+    
+    for i in range(1, possib + 1, step):
+        
+        if thresh == 0:
+            list1 = []
+            iStart = i
+            iEnd   = iStart + step
+            list1.append(iStart)
+            list1.append(iEnd)
+            list1.append(inputfplist)
+            list1.append(dim)
+            list1.append(protlist)
+            list1.append(smileslist)
+            list2.append(list1)
+        
+        else:
+            list1 = []
+            iStart = i
+            iEnd   = iStart + step
+            list1.append(iStart)
+            list1.append(iEnd)
+            list1.append(inputfplist)
+            list1.append(dim)
+            list1.append(protlist)
+            list1.append(smileslist)
+            list1.append(thresh)
+            list2.append(list1)
+            
+        
+    pool = mp.Pool(mp.cpu_count())
+    tempComp = pool.starmap(result, list2)
+    pool.close()
+    
+    return tempComp  
+        
+###########################################################################################
+
+
+#### This function is suppose to be called after subsampling, fpgeneration, and comparison.  We need to sort, count total number in subsample, determine topX%, select threshold, and return the threshold.
+def determineThresholdfromSubsample(list1):
+    
+    global theTopPercent
+    
+    list3 = []
+    
+    for i in list1:
+        list3.extend(i)
+
+    simlist = []    
+    
+    for i in range(0, len(list3), 5):
+        simlist.append(list3[i] + 0)
+    
+    sortedsimlist = sorted(simlist)
+    totalSims = len(sortedsimlist)
+    topCandidates = round(totalSims * theTopPercent)
+    toSetThresh = (sortedsimlist[-topCandidates:])
+    threshold = toSetThresh[0]
+    
+    return threshold
+#######
+
+### This function writes out the top candidates to file
+def writeOutTopCandidates(list1):
+    
+    list2 = []
+    
+    for i in list1:
+        list2.extend(i)
+    
+    f = open(outputFilepath, 'w')
+    
+    for i in range(0, len(list2), 5):
+        f.write(str(list2[i + 1]) + '_' + str(list2[i + 3]) + ' ' + str(list2[i + 2]) + '_' + str(list2[i + 4]) + ' ' + str(list2[i + 0]) + '\n')
+    f.close()
+
+####### Takes two dataframes and compared the two randomized vectors ########## This needs to be updated to look like the proper comparison.  #### not even sure needed at this point... a relic for comparison sake
+def all2AllComparisonRandom(DBSub2Compare, Compoundsub2Compare, comp):
+    
+    size1 = len(DBSub2Compare.DBRandomizedFP)
+    size3 = len(Compoundsub2Compare.DBRandomizedFP)
+    random = []
+    Smiles1 = []
+    Smiles2 = []
+    ProtienTarget1 = []
+    ProtienTarget2 = []
+    
+    for i in range(0, size1):
+        
+        for j in range(0, size3):
+            
+            if comp == 'Dice' or 'Tan' or 'Sokal' or 'Russ' or 'Rogot' or 'Mccon' or 'Kulcz' or 'Cosine':
+                
+                if (i < j):
+                    tempValue1 = singleComparison(DBSub2Compare.DBRandomizedFP[i], Compoundsub2Compare.DBRandomizedFP[j], comp)
+                    random.append(tempValue1)
+                    Smiles1.append(DBSub2Compare.smiles[i])
+                    Smiles2.append(Compoundsub2Compare.smiles[j])
+                    ProtienTarget1.append(DBSub2Compare.ProtienTarget[i])
+                    ProtienTarget2.append(Compoundsub2Compare.ProtienTarget[j])
+    
+    RandomDFForGraphs = pd.DataFrame(list(zip(Smiles1, Smiles2, ProtienTarget1, ProtienTarget2, random)), columns = ['Smiles1', 'Smiles2', 'ProtienTarget1', 'ProtienTarget2', comp + 'Random']) 
+    indexnames = RandomDFForGraphs[RandomDFForGraphs[comp + 'Random'] == 0].index
+    RandomDFForGraphs.drop(indexnames, inplace = True)
+    return (RandomDFForGraphs)
+############
+
+
+#####Checks the raw list of arguments and ensures that they are valid before proceeding with the program #######
+def areRawParametersValid(rawListOfArguments):
+    
+    validityDB = True
+    validityCompounds = True
+    validityFP = True
+    validitySubsampligRate = True
+    validityComp = True
+    validityTopPercent = True
+    validityOutput = False
+    
+    if os.path.isfile(inputDB):
+        print ("input DB exists")
+    else:
+        validityDB = False
+        
+    if inputFP == 'topo' or inputFP == 'maccs' or inputFP == 'ecfp6' or inputFP == 'fcfp6' or inputFP == 'fpn4':
+        print ('Valid FP')
+    else:
+        validityFP = False
+        
+    if inputSubsamplingRate >= 0 and inputSubsamplingRate <= 1 :
+        print ('Valid sub sampeling rate')
+    else:
+        validitySubsampligRate = False
+        
+    if theTopPercent >= 0 and theTopPercent <= 1:
+        print('Valid top percent')
+    else:
+        validityTopPercent = False
+        
+    if inputComp == 'Dice' or inputComp == 'Tan' or inputComp == 'Sokal' or inputComp == 'Russ' or inputComp == 'Rogot' or inputComp == 'Mccon' or inputComp == 'Kulcz' or inputComp == 'Cosine':
+        print ('Valid Comparison type')
+    else:
+        validityComp = False
+        
+    if os.path.isfile(outputFilepath):
+        print ('output File Exists')
+        validityOutput = False
+    else:
+        print ('output File Does Not Exists! Which is Good!')
+        validityOutput = True
+        
+    if(validitySubsampligRate == False):
+        print("aborting! invalid subsampling rate!")
+        sys.exit()
+        
+    if(validityTopPercent == False):
+        print("aborting! invalid top percent rate!")
+        sys.exit()
+        
+    if(validityCompounds == False):
+        print('aborting! invalid componds')
+        sys.exit()
+    
+    if(validityDB == False):
+        print('aborting! invalid databases')
+        sys.exit()
+        
+    if(validityFP == False):
+        print('aborting! invalid FP')
+        sys.exit()
+        
+    if(validityComp == False):
+        print('aborting! Invalid comparison type')
+        sys.exit()
+        
+    if(validityOutput == False):
+        print('aborting! Outputfile Exists')
+        sys.exit()
+        
+    if(validityCompounds == True and validityDB == True and validityFP == True and validitySubsampligRate == True and validityComp == True and validityOutput == True and validityTopPercent == True):
+        return True
+    else:
+        return False
+
+rawListOfArgs(rawListOfArguments)
+
+passed = areRawParametersValid(rawListOfArguments)
+
+if passed == True:
+    print('Prepare to Launch')
+else:
+    print("PROBLEMS!")
+
+
+#####Main program to call all the functions.  Need to apply some if then statements in the final program so people can choose to output a graph, sdf or smiles input, potetinally clustering options? ######
+def main():
+    print('initilizing')
+    print('Loading small Molecules')
+    df1 = smiles2DF(inputDB)
+    print('Small molecules Loaded')
+    print('Starting to subsample the molecules')
+    sub1 = subsampleDF(df1)
+    print('subsampled')
+    print('Generating the fingerprints for the subsample')
+    c3 = genProperFP(sub1, inputFP)
+    print('fingerprints for the subsample generated')
+    print('starting similarity comparison for the subsampled data')
+    subsampledDATAforThreshold = all2AllCompProp(c3, inputComp, inputFP)
+    print('similarities have been calculated for the subsampled data')
+    print('determining a threshold based of the topx% set by user based off the similaritiy scores for the subsampled data')
+    threshold = determineThresholdfromSubsample(subsampledDATAforThreshold)
+    print('the threshold has been determined to be' + ' ' + str(threshold))
+    print('generating fingerprints for all of the data')
+    c4 = genProperFP(df1, inputFP)
+    print('all fingperints have been generated and the comparisons are being made.  Similaries between compounds above the threshold will returned')
+    simsAboveThresh = all2AllCompProp(c4, inputComp, inputFP, threshold)
+    print('Similarities above the threshold have been returned and will be written to file')
+    writeOutTopCandidates(simsAboveThresh)
+    print('the similarity pipeline is complete and data is in a format to insert into most clustering algorithims in the form node1 node2 edge')
+
+    
+########################################################### 
+
+main()
