@@ -1,0 +1,203 @@
+
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Mon Jul 27 13:09:23 2020
+
+@author: 7ka
+"""
+
+##### The purpose of this script is to search the graph for nodes that are of user interest and those that are within x levels of connectivity and then pull the clusters that they are associate with those nodes. The required input for this to work is the input and output from the MCL algorithim.
+
+
+### This portion of the code is to read in the comparison matrix, cluster result, and key.  It creates three objects, a cluster dictionary (clustdict) where the key is the cluster number and the value is a list of nodes, a dictionary representing the thresholded, undirected, unweighted network (graphdict), and a key dictionary where keys are node ID's and values are smiles .####
+import collections
+import pandas as pd
+import sys
+
+
+def createGraph(comparisonMatrix):
+    
+    x = pd.read_csv(comparisonMatrix, header = None, sep = ' ')
+    x0 = x[0].to_list()
+    x1 = x[1].to_list()
+    graphdict = {}
+   
+    for i in range(0, len(x0)):
+        
+        if x0[i] in graphdict:
+            graphdict[x0[i]].append(x1[i])
+        
+        else:
+            graphdict[x0[i]] = [x1[i]]
+        
+        if x1[i] in graphdict:
+            graphdict[x1[i]].append(x0[i])
+        
+        else:
+            graphdict[x1[i]] = [x0[i]]
+            
+    return graphdict
+
+def createClustDictionary(clusterResults):
+    
+    clustdict = {}
+    
+    with open(clusterResults) as file:
+    
+        keycounter = 0
+        
+        for line in file:
+            myLine = line.split()
+            clustdict[keycounter] = myLine
+            keycounter = keycounter +1
+    
+    return clustdict
+
+def createDictKey(keyForSmiles):
+    
+    y = pd.read_csv(keyForSmiles, header = None, sep = ' ')
+    y0 = y[0].to_list()
+    y1 = y[1].to_list()
+    keydict = {}       
+    
+    for i in range(0, len(y0)):
+        keydict[y1[i]] = y0[i]       
+   
+    return keydict
+##############
+
+
+### This code is meant to perform a breath first search for user defined nodes and returns all nodes that are at x level from the user defined vertex #####    
+def bfs(graph, root):
+    
+    visited, queue = set(), collections.deque([root])
+    visited.add(root)
+    
+    levels = {}
+    levels[root] = 0
+    
+    while queue:
+        
+        vertex = queue.popleft()
+       
+        for neighbor in graph[vertex]:
+            
+            if neighbor not in visited:
+                visited.add(neighbor)
+                queue.append(neighbor)
+                levels[neighbor] = levels[vertex] + 1
+                
+    return(levels)
+#########
+    
+
+##### This function is meant to get the nearest nodes to the node if interest within a user defined depth and returns the list of nodes.      
+def getNearestNodes(root, graph, levelCutOff):
+    
+    vertexes = []
+    
+    for i, j in graph.items():
+        vertexes.append(i)
+        
+        if int(j) > int(levelCutOff):
+            break
+    
+    return vertexes
+#####
+    
+
+#### This function is meant to take the node/vertex list and cluster dictionary in order to extract the cluster key and then returns the list of cluster keys that are associated with the nodes.
+def getClustersfromNodes(nodes, clusterdictionary):
+    print(nodes)
+    print(clusterdictionary)
+    listofclusterskeys = []
+    
+    for i in nodes:
+       
+        for clusterkey, value in clusterdictionary.items():
+            
+            for j in value:
+                
+                if str(i) == str(j):
+                    listofclusterskeys.append(clusterkey)
+    
+    return listofclusterskeys
+#######
+
+
+#####This function is meant to get all of the nodes from the cluster keys that were gathered from the getClustersFromNodes function and returns this list of nodes
+def getNodeFromClusters(listofclusterkeys, clustdict):
+    
+    listofNodes = []
+    
+    for i in listofclusterkeys:
+        
+        for key, value in clustdict.items():
+            
+            if str(i) == str(key):
+                
+                listofNodes.append(value)
+    
+    return(listofNodes)
+#####
+
+
+##### This function takes the list of lists of nodes and returns an a list of the nodes to be written.  
+def makelistofNodes(listoflistofnodes):
+    
+    printlist = []
+    
+    for i in listofnodes:
+        
+        for j in i:
+            printlist.append(j)
+    
+    return printlist
+#####
+
+
+#### The purpose of this function is to take the key and compare it to the node list from makelistofNodes in order to return the smiles.
+def nodes2Smiles(listofnodes, keydict):
+   
+    smileslist = []
+    
+    for key, value in keydict.items():
+        
+        for node in listofnodes:
+            
+            if str(node) == str(key):
+                smileslist.append(value)
+                
+    return smileslist
+
+
+####MAIN#####
+listofArgs = sys.argv
+
+comparisonMatrix = listofArgs[1]
+clusterResults = listofArgs[2]
+keyForSmiles = listofArgs[3]
+root_list = listofArgs[4]
+depthOfSearch = listofArgs[5]
+
+graph = createGraph(comparisonMatrix)
+clustdict = createClustDictionary(clusterResults)
+keydict = createDictKey(keyForSmiles)
+
+xroot = pd.read_csv(root_list, header = None)
+x0 = xroot[0].to_list()
+
+for i in x0:
+    
+    bfs_output = bfs(graph, int(i))
+    vertexlist = getNearestNodes(int(i), bfs_output, depthOfSearch)
+    listofclusterkeys = getClustersfromNodes(vertexlist, clustdict)
+    listofnodes = getNodeFromClusters(listofclusterkeys, clustdict)
+    listtoprint = makelistofNodes(listofnodes)
+    smilesList = nodes2Smiles(listtoprint, keydict)
+    
+    with open('BFSResults_node' + str(i) + '_depth_of_' + depthOfSearch + '.txt', 'w') as f:
+        
+        for item in smilesList:
+            f.write("%s\n" % item)
