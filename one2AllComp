@@ -4,7 +4,7 @@
 Created on Wed Feb  5 14:53:41 2020
 
 @author: 7ka
-
+# The purpose of this script is to have a single compound compared to all other compounds based on a user selecte fingerprint
 """
 from rdkit import Chem
 from rdkit.Chem import AllChem
