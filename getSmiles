@@ -3,6 +3,8 @@
 Created on Tue Mar 16 09:50:25 2021
 
 @author: Kirtley
+
+# The purpose of this script is to search two different websites (NCI Cactus and then pubchem) to get the SMILES reperesentations of compounds
 """
 
 from urllib.request import urlopen
