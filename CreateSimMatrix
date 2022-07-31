@@ -4,7 +4,7 @@
 Created on Wed Feb  5 14:53:41 2020
 
 @author: 7ka
-
+# The pupose of this script is to do a pairwise comparison of SMILES molecules based off user selected Fingerprint
 """
 import pandas as pd
 import numpy as np
